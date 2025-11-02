@@ -1,6 +1,6 @@
 {
 "env": { "es2022": true, "node": true, "jest": true },
-"extends": ["standard"],
+"extends": ["eslint:recommended"],
 "rules": {
 "no-console": "off"
 }
