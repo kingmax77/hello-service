@@ -1,0 +1,77 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+
+    - name: Install dependencies
+      run: npm ci
+
+
+    - name: Lint
+      run: npm run lint
+
+    - name: Test
+      run: npm test
+
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+
+    - name: Copy repo to EC2 (rsync over SSH)
+      uses: burnett01/rsync-deployments@7.0.1
+      with:
+        switches: -avzr --delete
+        path: ./
+        remote_path: ${{ secrets.EC2_APP_DIR }}
+        remote_host: ${{ secrets.EC2_HOST }}
+        remote_user: ${{ secrets.EC2_USER }}
+        remote_key: ${{ secrets.EC2_SSH_KEY }}
+
+
+    - name: Run remote commands (install & restart via PM2)
+      uses: appleboy/ssh-action@v1.2.0
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.EC2_SSH_KEY }}
+        script: |
+          set -e
+          cd ${{ secrets.EC2_APP_DIR }}
+          # Ensure Node & PM2 exist (nvm assumed from setup steps below)
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          nvm install 20
+          nvm use 20
+          
+          npm ci --omit=dev
+          # Start or restart service with PM2
+          pm2 describe hello-service > /dev/null 2>&1 && PM2_EXISTS=true || PM2_EXISTS=false
+          if [ "$PM2_EXISTS" = true ]; then
+            pm2 restart hello-service
+          else
+            PORT=${{ secrets.APP_PORT }} pm2 start src/server.js --name hello-service --time
+            pm2 save
+          fi
